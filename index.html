@@ -54,7 +54,7 @@ ul{padding-left:18px}li{margin-bottom:4px}h3{font-size:12px;color:var(--cy);lett
 <div class="pane on" id="p-chart">
   <div id="tbar"><button class="btn" id="sym-btn" style="font-size:13px" onclick="openSearch(chgSym)">🔍</button><span id="tfs"></span>
   <button class="btn on" id="b-auto" onclick="toggleAuto()">AUTO TF</button><span id="lg" class="mono" style="font-size:11px;color:var(--t2)"></span></div>
-  <div style="position:relative;flex:1;min-height:0"><div id="chart" style="position:absolute;inset:0"></div><div id="ohlc"></div></div>
+  <div style="position:relative;flex:1;min-height:0"><div id="chart" style="position:absolute;inset:0"></div><canvas id="ov" style="position:absolute;inset:0;pointer-events:none;z-index:4"></canvas><div id="ohlc"></div></div>
 </div>
 <div class="pane" id="p-signal"></div>
 <div class="pane" id="p-mtf"></div>
@@ -63,6 +63,7 @@ ul{padding-left:18px}li{margin-bottom:4px}h3{font-size:12px;color:var(--cy);lett
 <div class="pane" id="p-hist"></div>
 <div class="pane" id="p-stats"></div>
 <div class="pane" id="p-alerts"></div>
+<div class="pane" id="p-webhook"></div>
 
 <script>
 const COINS=['BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT','ADAUSDT','AVAXUSDT','DOGEUSDT','DOTUSDT','LINKUSDT'];
@@ -157,16 +158,16 @@ function loadLib(){const U=['https://cdn.jsdelivr.net/npm/lightweight-charts@4.1
   return new Promise(res=>{let i=0;setTimeout(res,9000);const next=()=>{if(window.LightweightCharts||i>=U.length)return res();const s=document.createElement('script');s.src=U[i++];s.onload=()=>res();s.onerror=next;document.head.appendChild(s)};next()})}
 function miniChart(el){
   const cv=document.createElement('canvas');cv.style.cssText='width:100%;height:100%;display:block';el.appendChild(cv);const g=cv.getContext('2d');
-  let W=0,H=0,from=0,to=130,SR=[],lines=[],raf=0,mx=-1,my=-1,cbs=[];
+  let W=0,H=0,from=0,to=130,SR=[],lines=[],raf=0,mx=-1,my=-1,cbs=[],geo=null;
   const sched=()=>{if(!raf)raf=requestAnimationFrame(()=>{raf=0;draw()})};
   function size(){const r=el.getBoundingClientRect(),d=devicePixelRatio||1;W=r.width;H=r.height;cv.width=W*d;cv.height=H*d;g.setTransform(d,0,0,d,0,0);sched()}
   new ResizeObserver(size).observe(el);
-  const mkS=(type,o)=>{const s={type,o:o||{},data:[],mk:[],setData(d){s.data=d;sched()},setMarkers(m){s.mk=m;sched()},createPriceLine(p){lines.push(p);sched();return p},removePriceLine(l){lines=lines.filter(x=>x!==l);sched()},applyOptions(){}};SR.push(s);return s};
+  const mkS=(type,o)=>{const s={type,o:o||{},data:[],mk:[],priceToCoordinate:p=>geo?(geo.hi-p)/(geo.hi-geo.lo)*geo.PH:null,setData(d){s.data=d;sched()},setMarkers(m){s.mk=m;sched()},createPriceLine(p){lines.push(p);sched();return p},removePriceLine(l){lines=lines.filter(x=>x!==l);sched()},applyOptions(){}};SR.push(s);return s};
   function draw(){
     g.fillStyle='#131722';g.fillRect(0,0,W,H);const c=SR.find(s=>s.type=='c');if(!c||!c.data.length||W<80)return;
     const C=c.data,AX=62,PW=W-AX,bw=PW/(to-from),X=i=>(i-from+.5)*bw,i0=Math.max(0,Math.floor(from)),i1=Math.min(C.length-1,Math.ceil(to));
     let hi=-1e18,lo=1e18;for(let i=i0;i<=i1;i++){hi=Math.max(hi,C[i].high);lo=Math.min(lo,C[i].low)}
-    if(hi<lo)return;const pad=(hi-lo)*.06||hi*.001;hi+=pad;lo-=pad;const PH=H-18,Y=p=>(hi-p)/(hi-lo)*PH,idx=new Map(C.map((x,i)=>[x.time,i])),inR=i=>i!=null&&i>=i0&&i<=i1;
+    if(hi<lo)return;const pad=(hi-lo)*.06||hi*.001;hi+=pad;lo-=pad;const PH=H-18,Y=p=>(hi-p)/(hi-lo)*PH,idx=new Map(C.map((x,i)=>[x.time,i])),inR=i=>i!=null&&i>=i0&&i<=i1;geo={hi,lo,PH,idx,X};
     g.font='10px Consolas,monospace';g.textAlign='left';g.lineWidth=1;
     for(let k=0;k<=6;k++){const p=lo+(hi-lo)*k/6,y=Y(p);g.strokeStyle='#1e222d';g.beginPath();g.moveTo(0,y);g.lineTo(PW,y);g.stroke();g.fillStyle='#94a3b8';g.fillText(fp(p),PW+4,y+3)}
     for(let k=0;k<5;k++){const i=Math.round(i0+(i1-i0)*k/4);if(C[i]){const d=new Date(C[i].time*1000);g.fillStyle='#475569';g.fillText(d.getDate()+'/'+(d.getMonth()+1)+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'),X(i)-18,H-4)}}
@@ -184,14 +185,14 @@ function miniChart(el){
   let dr=null;cv.onmousedown=e=>dr={x:e.clientX,f:from,t:to};addEventListener('mouseup',()=>dr=null);
   addEventListener('mousemove',e=>{if(!dr)return;const d=(e.clientX-dr.x)/((W-62)/(dr.t-dr.f));from=dr.f-d;to=dr.t-d;sched()});
   cv.onwheel=e=>{e.preventDefault();from=to-(to-from)*(e.deltaY>0?1.12:.89);sched()};cv.onmousemove=e=>{const r=cv.getBoundingClientRect();mx=e.clientX-r.left;my=e.clientY-r.top;sched()};cv.onmouseleave=()=>{mx=-1;sched();cbs.forEach(f=>f({}))};
-  return{addCandlestickSeries:o=>mkS('c',o),addHistogramSeries:o=>mkS('h',o),addLineSeries:o=>mkS('l',o),priceScale:()=>({applyOptions(){}}),timeScale:()=>({setVisibleLogicalRange(r){from=r.from;to=r.to;sched()}}),subscribeCrosshairMove:f=>cbs.push(f)}}
+  return{addCandlestickSeries:o=>mkS('c',o),addHistogramSeries:o=>mkS('h',o),addLineSeries:o=>mkS('l',o),priceScale:()=>({applyOptions(){},width:()=>62}),timeScale:()=>({setVisibleLogicalRange(r){from=r.from;to=r.to;sched()},timeToCoordinate:t=>{if(!geo)return null;const i=geo.idx.get(t);return i==null?null:geo.X(i)}}),subscribeCrosshairMove:f=>cbs.push(f)}}
 function initChart(){const LW=window.LightweightCharts||{createChart:miniChart},el=$('chart');
   chart=LW.createChart(el,{autoSize:true,layout:{background:{color:'#131722'},textColor:'#94a3b8'},grid:{vertLines:{color:'#1e222d'},horzLines:{color:'#1e222d'}},timeScale:{timeVisible:true,borderColor:'#1a2744'},rightPriceScale:{borderColor:'#1a2744'}});
   cs=chart.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false});
   vs=chart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'v'});chart.priceScale('v').applyOptions({scaleMargins:{top:.88,bottom:0}});
   const lo={priceLineVisible:false,lastValueVisible:false};
   lma=chart.addLineSeries({...lo,lineWidth:2});l20=chart.addLineSeries({...lo,color:'rgba(0,212,255,.55)',lineWidth:1});l50=chart.addLineSeries({...lo,color:'rgba(255,140,0,.55)',lineWidth:1});
-  chart.subscribeCrosshairMove(p=>{const d=p&&p.time&&p.seriesData&&p.seriesData.get(cs);showOHLC(d||null)});if(!window.LightweightCharts)console.warn('CDN chart gagal, memakai chart bawaan')}
+  startOv();chart.subscribeCrosshairMove(p=>{const d=p&&p.time&&p.seriesData&&p.seriesData.get(cs);showOHLC(d||null)});if(!window.LightweightCharts)console.warn('CDN chart gagal, memakai chart bawaan')}
 function renderChart(){const d=cur();if(!d||!d.res)return;const K=d.K,r=d.res,T=r.K.map(x=>x.t),w=60;
   cs.setData(K.map(x=>({time:x.t,open:x.o,high:x.h,low:x.l,close:x.c})));
   vs.setData(K.map(x=>({time:x.t,value:x.v,color:x.c>=x.o?'rgba(38,166,154,.4)':'rgba(239,83,80,.4)'})));
@@ -209,7 +210,7 @@ function renderChart(){const d=cur();if(!d||!d.res)return;const K=d.K,r=d.res,T=
   $('lg').innerHTML=`${S.sym} ${S.tf} · <b class="${r.active?(r.active.side==1?'G':'R'):'Y'}">${lt}</b> · MA${CFG.maLen} kuning=bullish / ungu=bearish`}
 
 /* ---------- navigasi ---------- */
-const TABS=[['chart','📊 CHART'],['signal','⚡ SIGNAL & POSISI'],['mtf','🕐 MULTI-TF'],['scan','🔍 SCANNER'],['paper','💹 TRADE'],['hist','📋 HISTORY'],['stats','📈 STATS'],['alerts','🔔 ALERTS']];
+const TABS=[['chart','📊 CHART'],['signal','⚡ SIGNAL & POSISI'],['mtf','🕐 MULTI-TF'],['scan','🔍 SCANNER'],['paper','💹 TRADE'],['hist','📋 HISTORY'],['stats','📈 STATS'],['alerts','🔔 ALERTS'],['webhook','📡 WEBHOOK']];
 $('tabs').innerHTML=TABS.map(([id,n])=>`<div class="tb ${id==='chart'?'on':''}" data-t="${id}" onclick="showTab('${id}')">${n}</div>`).join('');
 function showTab(id){document.querySelectorAll('.tb').forEach(e=>e.classList.toggle('on',e.dataset.t===id));document.querySelectorAll('.pane').forEach(e=>e.classList.toggle('on',e.id==='p-'+id));renderAll()}
 function tfBtns(){$('tfs').innerHTML=CHART_TFS.map(t=>`<button class="btn ${t===S.tf?'on':''}" onclick="setTF('${t}',true)">${t.toUpperCase()}</button>`).join(' ');$('b-auto').classList.toggle('on',S.auto);$('sym-btn').textContent='🔍 '+S.sym}
@@ -351,14 +352,60 @@ function rStats(){const d=cur();if(!d||!d.res)return;const st=d.res.st,wr=st.w+s
   $('p-stats').innerHTML=h}
 function rAlerts(){$('p-alerts').innerHTML=`<div class="card"><h3>LOG SINYAL BARU</h3>`+(alertsLog.length?alertsLog.map(a=>`<div style="padding:5px 0;border-bottom:1px solid #121c33"><span class="D mono">${a.time}</span> <b class="${a.side==1?'G':'R'}">${a.side==1?'LONG':'SHORT'}</b> ${a.sym} ${a.tf.toUpperCase()} · skor ${a.score} · entry ${fp(a.entry)} · SL ${fp(a.sl)} · TP3 ${fp(a.tp3)}</div>`).join(''):'<span class="D">Belum ada sinyal baru.</span>')+'</div>'}
 
+/* ---------- BOX TP/SL (overlay di atas chart) ---------- */
+let ovOn=false;
+function startOv(){if(ovOn)return;ovOn=true;(function lp(){try{drawBoxes()}catch(e){}requestAnimationFrame(lp)})()}
+function drawBoxes(){const c=$('ov');if(!c||!$('p-chart').classList.contains('on'))return;const el=$('chart'),w=el.clientWidth,h=el.clientHeight,d=devicePixelRatio||1;
+  if(c.width!==Math.round(w*d)||c.height!==Math.round(h*d)){c.width=Math.round(w*d);c.height=Math.round(h*d);c.style.width=w+'px';c.style.height=h+'px'}
+  const g=c.getContext('2d');g.setTransform(d,0,0,d,0,0);g.clearRect(0,0,w,h);const dd=cur();if(!dd||!dd.res||!cs||!cs.priceToCoordinate)return;
+  const r=dd.res,K=r.K,rx=w-chart.priceScale('right').width(),tc=t=>chart.timeScale().timeToCoordinate(t),pc=p=>cs.priceToCoordinate(p);g.font='11px Consolas,monospace';
+  r.trades.slice(-8).forEach(t=>{const x1=tc(t.time);if(x1==null)return;let x2=t.end!=null?tc(K[Math.min(K.length-1,t.end+20)].t):rx;if(x2==null)x2=rx;x2=Math.min(x2,rx);if(x2-x1<4)x2=Math.min(rx,x1+60);
+    const box=(a,b,fill,line,txt)=>{const y1=pc(Math.max(a,b)),y2=pc(Math.min(a,b));if(y1==null||y2==null)return;const hh=Math.max(y2-y1,3);g.fillStyle=fill;g.fillRect(x1,y1,x2-x1,hh);g.strokeStyle=line;g.lineWidth=1;g.strokeRect(x1+.5,y1+.5,x2-x1,hh);g.fillStyle='#fff';g.fillText(txt,x1+4,hh>=13?y1+12:y1-3)};
+    const pad=t.risk*.05,s=t.side;
+    box(t.entry+pad,t.entry-pad,'rgba(41,98,255,.35)','#2962ff','ENTRY '+fp(t.entry));
+    box(t.entry,t.tp1,'rgba(38,166,154,.18)','#26a69a','TP1 '+fp(t.tp1)+(t.h1?' ✔':''));
+    box(t.tp1,t.tp2,'rgba(38,166,154,.26)','#26a69a','TP2 '+fp(t.tp2)+(t.h2?' ✔':''));
+    box(t.tp2,t.tp3,'rgba(38,166,154,.34)','#26a69a','TP3 '+fp(t.tp3)+(t.h3?' ✔':''));
+    box(t.entry,t.sl0,'rgba(239,83,80,.28)','#ef5350','SL '+fp(t.sl0)+(t.status=='SL'?' HIT':t.status=='BE'?' (BE)':''))})}
+/* ---------- WEBHOOK TELEGRAM ---------- */
+let WH={on:false,tg:{token:'',chat:''},url:'',min:70,htf:1,tfs:['5m','15m','1h','4h'],sent:[],log:[]};
+try{Object.assign(WH,JSON.parse(localStorage.getItem('nexus_wh')))}catch(e){}
+const saveWH=rd=>{if(rd){WH.tg.token=$('wh-tok').value.trim();WH.tg.chat=$('wh-chat').value.trim();WH.url=$('wh-url').value.trim();WH.min=+$('wh-min').value||0;WH.htf=+$('wh-htf').value||0;WH.tfs=[...document.querySelectorAll('.wh-tf')].filter(x=>x.checked).map(x=>x.value);toast('Webhook disimpan')}try{localStorage.setItem('nexus_wh',JSON.stringify(WH))}catch(e){}};
+function whyList(t){const s=t.side,w=t.why;return[w.brk?`Close menembus swing ${s==1?'high':'low'} terakhir (breakout)`:`Liquidity sweep swing ${s==1?'low':'high'} lalu close kembali ke dalam range`,
+  `Trend EMA20${s==1?'>':'<'}EMA50${s==1?'>':'<'}EMA200, ADX ${w.adx.toFixed(0)}`,`Momentum RSI ${w.rsi.toFixed(0)}, MACD ${w.hist>0?'positif':'negatif'}, volume ${w.rv.toFixed(1)}x`,
+  `Filter MA${CFG.maLen} searah, ${w.hs.filter(x=>x===s).length}/3 TF lebih tinggi (1H/4H/1D) searah`,`Skor setup ${t.score}/100`]}
+function sigMsg(sym,tf,t){return `${t.side==1?'🟢 LONG':'🔴 SHORT'} SIGNAL\nNAMA COIN: ${sym}\nENTRY: ${fp(t.entry)}\nTP: TP1 ${fp(t.tp1)} | TP2 ${fp(t.tp2)} | TP3 ${fp(t.tp3)}\nSL: ${fp(t.sl0)}\nALASAN TRADE DI TF ${tf.toUpperCase()}:\n`+whyList(t).map(x=>'- '+x).join('\n')}
+async function sendTG(text){const c=WH.tg;if(!c.token||!c.chat)throw new Error('Token / Chat ID kosong');const r=await fetch(`https://api.telegram.org/bot${c.token}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:c.chat,text})}),j=await r.json();if(!j.ok)throw new Error(j.description||'ditolak Telegram')}
+async function pushSignal(sym,tf,t){const msg=sigMsg(sym,tf,t);let st='OK';
+  try{if(WH.tg.token&&WH.tg.chat)await sendTG(msg);else if(!WH.url)throw new Error('Isi Telegram atau URL webhook');
+    if(WH.url)await fetch(WH.url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify({coin:sym,tf,side:t.side==1?'LONG':'SHORT',entry:t.entry,tp1:t.tp1,tp2:t.tp2,tp3:t.tp3,sl:t.sl0,score:t.score,reasons:whyList(t),text:msg})})}catch(e){st='GAGAL: '+e.message}
+  WH.log.unshift({time:new Date().toLocaleString(),sym,tf,st,msg});WH.log=WH.log.slice(0,40);saveWH();toast(`Webhook ${sym} ${tf}: ${st}`);if($('wh-log'))rWebhook()}
+function whCheck(sym,tf,r,t){if(!WH.on||!WH.tfs.includes(tf)||t.score<WH.min||r.K.length-1-t.i>1||t.why.hs.filter(x=>x===t.side).length<WH.htf)return;
+  const k=sym+tf+t.time;if(WH.sent.includes(k))return;WH.sent.push(k);WH.sent=WH.sent.slice(-300);pushSignal(sym,tf,t)}
+async function whTest(){saveWH(1);try{await sendTG('✅ NEXUS AI terhubung ke Telegram');toast('Tes terkirim')}catch(e){toast('Tes gagal: '+e.message)}}
+function whSendCur(){saveWH(1);const r=cur()&&cur().res,t=r&&(r.active||r.trades[r.trades.length-1]);if(!t){toast('Belum ada sinyal di chart ini');return}pushSignal(S.sym,S.tf,t)}
+function rWebhook(){if(!$('wh-f')){$('p-webhook').innerHTML=`<div class="tr"><div class="card" id="wh-f"><h3>📡 WEBHOOK SINYAL → TELEGRAM</h3>
+<div class="seg"><button class="btn" id="wh-on" onclick="WH.on=!WH.on;saveWH();rWebhook()"></button></div>
+<div class="fld">BOT TOKEN (dari @BotFather)<input id="wh-tok" type="password" autocomplete="off"></div><div class="fld">CHAT ID (user / grup / channel)<input id="wh-chat"></div>
+<div class="fld">WEBHOOK URL LAIN (opsional, dikirim JSON)<input id="wh-url" placeholder="https://..."></div>
+<div class="fld">MINIMAL SKOR SINYAL<input id="wh-min" type="number"></div><div class="fld">MINIMAL TF LEBIH TINGGI SEARAH (0-3)<input id="wh-htf" type="number" min="0" max="3"></div>
+<div class="fld">TIMEFRAME YANG DIKIRIM<div style="font-size:12px;color:var(--t)">${TFS.map(t=>`<label style="margin-right:8px"><input type="checkbox" class="wh-tf" value="${t}" ${WH.tfs.includes(t)?'checked':''}> ${t.toUpperCase()}</label>`).join('')}</div></div>
+<div class="seg"><button class="btn g" onclick="saveWH(1)">SIMPAN</button><button class="btn" onclick="whTest()">TES KIRIM</button></div>
+<button class="btn" style="width:100%" onclick="whSendCur()">KIRIM SINYAL CHART INI SEKARANG</button>
+<div class="D" style="font-size:10px;margin-top:8px">Sinyal dikirim otomatis saat setup baru (maks 1 bar) muncul di 10 coin scanner + coin yang sedang dibuka, selama terminal terbuka di browser. Token tersimpan di browser ini saja; jangan bagikan file/browser ini.</div></div>
+<div class="card"><h3>LOG PENGIRIMAN</h3><div id="wh-log"></div></div></div>`;
+  $('wh-tok').value=WH.tg.token;$('wh-chat').value=WH.tg.chat;$('wh-url').value=WH.url;$('wh-min').value=WH.min;$('wh-htf').value=WH.htf}
+  const b=$('wh-on');b.textContent=WH.on?'● AUTO KIRIM: ON':'○ AUTO KIRIM: OFF';b.classList.toggle('g',WH.on);
+  $('wh-log').innerHTML=WH.log.length?WH.log.map(l=>`<div style="padding:6px 0;border-bottom:1px solid #121c33"><span class="D mono">${l.time}</span> <b>${l.sym} ${l.tf.toUpperCase()}</b> <span class="${l.st=='OK'?'G':'R'}">${l.st}</span><pre class="mono D" style="font-size:11px;white-space:pre-wrap;margin-top:4px">${l.msg}</pre></div>`).join(''):'<span class="D">Belum ada pengiriman.</span>'}
+
 /* ---------- render & loop ---------- */
 function rHeader(){const d=cache[S.sym];$('h-pair').textContent=S.sym;$('h-px').textContent=fp(px[S.sym]);
   if(d){const T=TFS.map(t=>d[t].res.last.trend);$('h-cons').innerHTML=`<span class="G">${T.filter(x=>x==1).length}</span> / <span class="R">${T.filter(x=>x==-1).length}</span>`}
   const w=P.hist.filter(t=>t.pnl>0).length;$('h-wr').textContent=P.hist.length?(w/P.hist.length*100).toFixed(0)+'%':'--%';
   const op=uPnL();$('h-pnl').textContent=(op>=0?'+':'')+'$'+op.toFixed(2);$('h-sig').textContent=alertsLog.length}
 function renderAll(){rHeader();const a=document.querySelector('.pane.on').id;
-  ({'p-chart':renderChart,'p-signal':rSignal,'p-mtf':rMTF,'p-scan':rScan,'p-paper':rPaper,'p-hist':rHist,'p-stats':rStats,'p-alerts':rAlerts})[a]()}
-function checkAlerts(sym){TFS.forEach(tf=>{const r=cache[sym][tf].res;if(!fresh(r))return;const t=r.active,k=sym+tf+t.time;if(seen.has(k))return;seen.add(k);
+  ({'p-chart':renderChart,'p-signal':rSignal,'p-mtf':rMTF,'p-scan':rScan,'p-paper':rPaper,'p-hist':rHist,'p-stats':rStats,'p-alerts':rAlerts,'p-webhook':rWebhook})[a]()}
+function checkAlerts(sym){TFS.forEach(tf=>{const r=cache[sym][tf].res;if(!fresh(r))return;const t=r.active,k=sym+tf+t.time;if(seen.has(k))return;seen.add(k);whCheck(sym,tf,r,t);
   if(firstScan)return;alertsLog.unshift({time:new Date().toLocaleTimeString(),sym,tf,side:t.side,score:t.score,entry:t.entry,sl:t.sl0,tp3:t.tp3});
   toast(`${t.side==1?'LONG':'SHORT'} ${sym} ${tf.toUpperCase()} · skor ${t.score}`)})}
 async function scanAll(){$('upd').textContent='scanning...';
